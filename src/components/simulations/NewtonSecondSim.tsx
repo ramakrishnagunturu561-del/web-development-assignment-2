@@ -19,19 +19,6 @@ interface PredState {
   skipped: boolean;
 }
 
-function emptyPred(param: PredParam, prevAcc: number): PredState {
-  return {
-    param,
-    prediction: null,
-    prevAcceleration: prevAcc,
-    isRevealed: false,
-    correctAnswer: null,
-    actualDelta: null,
-    skipped: false,
-  };
-}
-
-/** Maps an acceleration delta to 'up' | 'down' | 'same' */
 function deltaToDir(delta: number): 'up' | 'down' | 'same' {
   if (Math.abs(delta) < 0.05) return 'same';
   return delta > 0 ? 'up' : 'down';

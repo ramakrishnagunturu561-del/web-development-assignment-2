@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { MisconceptionRecap } from "./sections/MisconceptionRecap";
 
 type Section = {
   id: number;
@@ -19,7 +20,8 @@ const sections: Section[] = [
   { id: 7, title: "Translational Equilibrium", shortTitle: "Equilibrium", duration: "10 min" },
   { id: 8, title: "Atwood Machine", shortTitle: "Atwood", duration: "12 min" },
   { id: 9, title: "Uniform Circular Motion", shortTitle: "Circular Motion", duration: "10 min" },
-  { id: 10, title: "Final Chapter Challenge", shortTitle: "Challenge", duration: "15 min" },
+  { id: 10, title: "Misconceptions Recap", shortTitle: "Recap", duration: "5 min" },
+  { id: 11, title: "Final Chapter Challenge", shortTitle: "Challenge", duration: "15 min" },
 ];
 
 function Equation({
@@ -252,13 +254,21 @@ function App() {
           )}
 
           {activeSection === 10 && (
-            <FinalChallenge
+            <MisconceptionRecap
+              onJumpToSection={selectSection}
               onComplete={markComplete}
               onBack={() => selectSection(9)}
             />
           )}
 
-          {activeSection > 10 && (
+          {activeSection === 11 && (
+            <FinalChallenge
+              onComplete={markComplete}
+              onBack={() => selectSection(10)}
+            />
+          )}
+
+          {activeSection > 11 && (
             <PlaceholderSection
               section={sections[activeSection - 1]}
               onComplete={markComplete}

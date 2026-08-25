@@ -1,9 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ForceArrow } from './ForceArrow';
 import { Equation } from '../math/Equation';
+import { PredictReveal } from '../pedagogy/PredictReveal';
+import type { PredictRevealOption } from '../pedagogy/PredictReveal';
 import { calculateAcceleration, calculateNormalForce } from '../../utils/physics';
 import { Play, Pause, RotateCcw, Activity, Info } from 'lucide-react';
 
+/* ── Prediction state types ─────────────────────────────────────────────── */
+type PredParam = 'force' | 'mass';
+
+interface PredState {
+  param: PredParam;
+  prediction: string | null;
+  prevAcceleration: number;
+  isRevealed: boolean;
+  correctAnswer: string | null;
+  actualDelta: number | null; // signed delta in m/s²
+  skipped: boolean;
+}
+
+function emptyPred(param: PredParam, prevAcc: number): PredState {
+  return {
+    param,
+    prediction: null,
+    prevAcceleration: prevAcc,
+    isRevealed: false,
+    correctAnswer: null,
+    actualDelta: null,
+    skipped: false,
+  };
+}
+
+/** Maps an acceleration delta to 'up' | 'down' | 'same' */
+function deltaToDir(delta: number): 'up' | 'down' | 'same' {
+  if (Math.abs(delta) < 0.05) return 'same';
+  return delta > 0 ? 'up' : 'down';
+}
+
+const ACCEL_OPTIONS: PredictRevealOption[] = [
+  { label: 'Go up ↑', value: 'up', icon: '📈' },
+  { label: 'Go down ↓', value: 'down', icon: '📉' },
+  { label: 'Stay the same', value: 'same', icon: '➡️' },
+];
+
+/* ── Component ──────────────────────────────────────────────────────────── */
 export const NewtonSecondSim: React.FC = () => {
   const [mass, setMass] = useState<number>(2.0); // kg
   const [appliedForce, setAppliedForce] = useState<number>(10.0); // N (+ right, - left)
@@ -14,13 +54,17 @@ export const NewtonSecondSim: React.FC = () => {
   const [position, setPosition] = useState<number>(300);
   const [velocity, setVelocity] = useState<number>(0);
 
+  // Predict-then-reveal state — one for each slider (mass & force)
+  const [massPred, setMassPred] = useState<PredState | null>(null);
+  const [forcePred, setForcePred] = useState<PredState | null>(null);
+
   const requestRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(performance.now());
 
   // Physical calculations
   const normalForce = calculateNormalForce(mass);
   const frictionForceMagnitude = hasFriction ? muK * normalForce : 0;
-  
+
   // Friction opposes velocity or applied force if velocity is zero
   let frictionForce = 0;
   if (hasFriction) {
@@ -66,6 +110,115 @@ export const NewtonSecondSim: React.FC = () => {
     setVelocity(0);
     setIsPlaying(true);
   };
+
+  /* ── Prediction handlers ──────────────────────────────────────────────── */
+  const handleMassPredict = (choice: string) => {
+    setMassPred({
+      param: 'mass',
+      prediction: choice,
+      prevAcceleration: acceleration,
+      isRevealed: false,
+      correctAnswer: null,
+      actualDelta: null,
+      skipped: false,
+    });
+  };
+
+  const handleForcePredict = (choice: string) => {
+    setForcePred({
+      param: 'force',
+      prediction: choice,
+      prevAcceleration: acceleration,
+      isRevealed: false,
+      correctAnswer: null,
+      actualDelta: null,
+      skipped: false,
+    });
+  };
+
+  const handleMassChange = (newMass: number) => {
+    setMass(newMass);
+    // Compute new acceleration with updated mass
+    const newNormal = calculateNormalForce(newMass);
+    const newFriction = hasFriction ? muK * newNormal : 0;
+    const newFrictionForce = hasFriction && Math.abs(appliedForce) > 0.01
+      ? -Math.sign(appliedForce) * newFriction
+      : 0;
+    const newNet = appliedForce + newFrictionForce;
+    const newAcc = calculateAcceleration(newNet, newMass);
+
+    setMassPred((prev) => {
+      if (prev === null || prev.skipped) return null;
+      if (prev.isRevealed) {
+        // User moved slider again after reveal → start fresh
+        return null;
+      }
+      if (prev.prediction === null) return prev;
+      const delta = newAcc - prev.prevAcceleration;
+      const correct = deltaToDir(delta);
+      return {
+        ...prev,
+        isRevealed: true,
+        actualDelta: delta,
+        correctAnswer: correct,
+      };
+    });
+    // Reset force prediction when mass changes (fresh interaction)
+    setForcePred(null);
+    setVelocity(0);
+  };
+
+  const handleForceChange = (newForce: number) => {
+    setAppliedForce(newForce);
+    const newFriction = hasFriction ? muK * normalForce : 0;
+    const newFrictionForce = hasFriction && Math.abs(newForce) > 0.01
+      ? -Math.sign(newForce) * newFriction
+      : 0;
+    const newNet = newForce + newFrictionForce;
+    const newAcc = calculateAcceleration(newNet, mass);
+
+    setForcePred((prev) => {
+      if (prev === null || prev.skipped) return null;
+      if (prev.isRevealed) return null;
+      if (prev.prediction === null) return prev;
+      const delta = newAcc - prev.prevAcceleration;
+      const correct = deltaToDir(delta);
+      return {
+        ...prev,
+        isRevealed: true,
+        actualDelta: delta,
+        correctAnswer: correct,
+      };
+    });
+    setMassPred(null);
+    setVelocity(0);
+  };
+
+  /* ── Reveal content builders ──────────────────────────────────────────── */
+  const buildRevealContent = (pred: PredState, paramLabel: string) => {
+    const dir = pred.actualDelta !== null ? deltaToDir(pred.actualDelta) : 'same';
+    const dirLabel = dir === 'up' ? 'increased' : dir === 'down' ? 'decreased' : 'stayed the same';
+    const sign = pred.actualDelta !== null ? (pred.actualDelta >= 0 ? '+' : '') : '';
+    const deltaStr = pred.actualDelta !== null ? `${sign}${pred.actualDelta.toFixed(2)} m/s²` : '';
+    const accStr = acceleration.toFixed(2);
+
+    return (
+      <span>
+        Acceleration {dirLabel} ({deltaStr} → now {accStr} m/s²).{' '}
+        {paramLabel === 'force'
+          ? 'Per a = F/m, increasing net force directly increases acceleration.'
+          : 'Per a = F/m, increasing mass in the denominator reduces acceleration.'}
+      </span>
+    );
+  };
+
+  /* ── Should we show the predict prompt? ──────────────────────────────── */
+  // Show mass prediction prompt if no prediction is active yet for mass
+  const showMassPredictPrompt = massPred === null;
+  const showForcePredictPrompt = forcePred === null;
+
+  const massQuestion = `If I increase the mass, will the acceleration go up, down, or stay the same?`;
+  const forceQuestion = `If I increase the applied force, will the acceleration go up, down, or stay the same?`;
 
   return (
     <div
@@ -296,20 +449,61 @@ export const NewtonSecondSim: React.FC = () => {
 
       {/* Control Sliders & Toggles */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-950/70 border border-slate-800">
-        {/* Mass Slider */}
+        {/* Mass Slider — with Predict-Then-Reveal */}
         <div className="space-y-1.5">
+          {/* Predict prompt for mass */}
+          {showMassPredictPrompt && (
+            <PredictReveal
+              question={massQuestion}
+              options={ACCEL_OPTIONS}
+              prediction={null}
+              isRevealed={false}
+              correctAnswer={null}
+              onPredict={handleMassPredict}
+              onSkip={() =>
+                setMassPred({
+                  param: 'mass',
+                  prediction: null,
+                  prevAcceleration: acceleration,
+                  isRevealed: false,
+                  correctAnswer: null,
+                  actualDelta: null,
+                  skipped: true,
+                })
+              }
+            />
+          )}
+
+          {/* Pending or revealed state for mass */}
+          {massPred !== null && !massPred.skipped && (
+            <PredictReveal
+              question={massQuestion}
+              options={ACCEL_OPTIONS}
+              prediction={massPred.prediction}
+              isRevealed={massPred.isRevealed}
+              correctAnswer={massPred.correctAnswer}
+              onPredict={handleMassPredict}
+              onSkip={() => setMassPred(null)}
+              revealedContent={
+                massPred.isRevealed ? buildRevealContent(massPred, 'mass') : undefined
+              }
+            />
+          )}
+
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-slate-300">Object Mass (<Equation math="m" />)</span>
             <span className="font-mono text-cyan-400 font-bold">{mass.toFixed(1)} kg</span>
           </div>
           <input
             type="range"
+            id="newton2-mass-slider"
             min="0.5"
             max="10.0"
             step="0.5"
             value={mass}
-            onChange={(e) => setMass(parseFloat(e.target.value))}
+            onChange={(e) => handleMassChange(parseFloat(e.target.value))}
             className="w-full"
+            aria-label="Object mass in kilograms"
           />
           <div className="flex justify-between text-[10px] text-slate-500 font-mono">
             <span>0.5 kg (Light)</span>
@@ -317,20 +511,61 @@ export const NewtonSecondSim: React.FC = () => {
           </div>
         </div>
 
-        {/* Applied Force Slider */}
+        {/* Applied Force Slider — with Predict-Then-Reveal */}
         <div className="space-y-1.5">
+          {/* Predict prompt for force */}
+          {showForcePredictPrompt && (
+            <PredictReveal
+              question={forceQuestion}
+              options={ACCEL_OPTIONS}
+              prediction={null}
+              isRevealed={false}
+              correctAnswer={null}
+              onPredict={handleForcePredict}
+              onSkip={() =>
+                setForcePred({
+                  param: 'force',
+                  prediction: null,
+                  prevAcceleration: acceleration,
+                  isRevealed: false,
+                  correctAnswer: null,
+                  actualDelta: null,
+                  skipped: true,
+                })
+              }
+            />
+          )}
+
+          {/* Pending or revealed state for force */}
+          {forcePred !== null && !forcePred.skipped && (
+            <PredictReveal
+              question={forceQuestion}
+              options={ACCEL_OPTIONS}
+              prediction={forcePred.prediction}
+              isRevealed={forcePred.isRevealed}
+              correctAnswer={forcePred.correctAnswer}
+              onPredict={handleForcePredict}
+              onSkip={() => setForcePred(null)}
+              revealedContent={
+                forcePred.isRevealed ? buildRevealContent(forcePred, 'force') : undefined
+              }
+            />
+          )}
+
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-slate-300">Applied Force (<Equation math="F_{\text{app}}" />)</span>
             <span className="font-mono text-amber-400 font-bold">{appliedForce.toFixed(0)} N</span>
           </div>
           <input
             type="range"
+            id="newton2-force-slider"
             min="-30"
             max="30"
             step="2"
             value={appliedForce}
-            onChange={(e) => setAppliedForce(parseFloat(e.target.value))}
+            onChange={(e) => handleForceChange(parseFloat(e.target.value))}
             className="w-full"
+            aria-label="Applied force in Newtons"
           />
           <div className="flex justify-between text-[10px] text-slate-500 font-mono">
             <span>-30 N (Left)</span>
